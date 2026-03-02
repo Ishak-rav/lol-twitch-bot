@@ -251,6 +251,25 @@ def is_lol_client_running() -> bool:
     return False
 
 
+def dump_lcu_spectate_endpoints(port: str, headers: dict, config: dict):
+    """Fetch le swagger LCU et sauvegarde les endpoints spectate."""
+    try:
+        resp = requests.get(
+            f"https://127.0.0.1:{port}/swagger/v3/openapi.json",
+            headers=headers, verify=False, timeout=15
+        )
+        swagger = resp.json()
+        paths = swagger.get("paths", {})
+        spectate_paths = {k: v for k, v in paths.items() if "spectate" in k.lower()}
+        out_path = os.path.join(os.path.dirname(__file__), "..", "logs", "lcu_spectate_endpoints.json")
+        with open(out_path, "w") as f:
+            json.dump(spectate_paths, f, indent=2)
+        log.info(f"Endpoints spectate sauvegardés dans logs/lcu_spectate_endpoints.json")
+        log.info(f"Endpoints trouvés: {list(spectate_paths.keys())}")
+    except Exception as e:
+        log.warning(f"dump_lcu_spectate_endpoints erreur: {e}")
+
+
 def debug_lcu_friends(port: str, headers: dict):
     """Debug: affiche les amis en game et leur présence."""
     try:
@@ -341,8 +360,9 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             },
         ]
 
-        # Debug: liste les amis en game et leur présence
+        # Debug: liste les amis en game et dump endpoints spectate
         debug_lcu_friends(port, headers)
+        dump_lcu_spectate_endpoints(port, headers, config)
 
         log.info(f"Lancement spectateur via LCU v1: {riot_id} (game {game_id})")
         success = False
