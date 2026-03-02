@@ -251,6 +251,29 @@ def is_lol_client_running() -> bool:
     return False
 
 
+def dump_lcu_help(port: str, headers: dict):
+    """Dump toutes les fonctions LCU liées à spectate via POST /Help."""
+    try:
+        resp = requests.post(
+            f"https://127.0.0.1:{port}/Help",
+            json={"format": "Full"},
+            headers=headers, verify=False, timeout=15
+        )
+        data = resp.json()
+        # Filtre sur spectate
+        if isinstance(data, dict):
+            functions = data.get("functions", data.get("events", {}))
+            spectate = {k: v for k, v in functions.items() if "spectate" in k.lower()}
+        else:
+            spectate = [x for x in data if "spectate" in str(x).lower()]
+        out = os.path.join(os.path.dirname(__file__), "..", "logs", "lcu_help_spectate.json")
+        with open(out, "w") as f:
+            json.dump(spectate, f, indent=2)
+        log.info(f"LCU /Help spectate sauvegardé: {list(spectate.keys()) if isinstance(spectate, dict) else spectate[:5]}")
+    except Exception as e:
+        log.warning(f"dump_lcu_help erreur: {e}")
+
+
 def dump_lcu_spectate_endpoints(port: str, headers: dict, config: dict):
     """Fetch le swagger LCU et sauvegarde les endpoints spectate."""
     try:
@@ -396,6 +419,19 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
         # Fallback: debug LCU
         debug_lcu_friends(port, headers)
         dump_lcu_spectate_endpoints(port, headers, config)
+        dump_lcu_help(port, headers)
+
+        # Essai v2 avec variantes de noms de champ
+        log.info("Essai v2 avec variantes de champs...")
+        v2 = f"https://127.0.0.1:{port}/lol-gameflow/v2/spectate/launch"
+        for key_field in ["spectatorKey", "observerEncryptionKey", "key"]:
+            for gid in [game["gameId"], str(game["gameId"])]:
+                pl = {"serverAddress": "spectator.euw1.lol.pvp.net:80", key_field: game["observers"]["encryptionKey"], "gameId": gid}
+                r = requests.post(v2, json=pl, headers=headers, verify=False, timeout=10)
+                if r.status_code in (200, 204):
+                    log.info(f"✅ v2 SUCCÈS: {key_field}, gameId={type(gid).__name__}")
+                    break
+                log.warning(f"v2 {key_field} gameId={type(gid).__name__}: {r.status_code} {r.text[:80]}")
 
         log.info(f"Lancement spectateur via LCU v1: {riot_id} (game {game_id})")
         success = False
