@@ -294,31 +294,31 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             "Accept": "application/json"
         }
 
-        # Essaie avec le nom seul (sans #TAG) puis avec Riot ID complet
-        display_name = active_player["display_name"]   # ex: "KC Retlaw"
-        riot_id      = active_player["name"]           # ex: "KC Retlaw#EUW"
-        endpoint     = f"https://127.0.0.1:{port}/lol-spectator/v1/spectate/launch"
+        riot_id        = active_player["name"]
+        encryption_key = game["observers"]["encryptionKey"]
+        game_id        = game["gameId"]
 
-        log.info(f"Lancement spectateur via LCU: {riot_id} (game {game['gameId']})")
-        success = False
-        for name_variant in [display_name, riot_id]:
-            payload = {
-                "dropInSpectateGameId": name_variant,
-                "gameQueueType": "",
-                "allowObserveMode": "ALL",
-                "puuid": active_player["puuid"]
-            }
-            log.info(f"Essai avec dropInSpectateGameId='{name_variant}'")
-            resp = requests.post(
-                endpoint,
-                json=payload,
-                headers=headers,
-                verify=False,
-                timeout=15
-            )
-            if resp.status_code in (200, 204):
-                success = True
-                break
+        # Appel direct à gameflow avec la clé qu'on a récupérée depuis la Riot API
+        endpoint = f"https://127.0.0.1:{port}/lol-gameflow/v2/spectate/launch"
+        payload  = {
+            "serverAddress": "spectator.euw1.lol.pvp.net",
+            "serverPort": 80,
+            "encryptionKey": encryption_key,
+            "gameId": game_id,
+            "summonerId": 0
+        }
+
+        log.info(f"Lancement spectateur via LCU gameflow: {riot_id} (game {game_id})")
+        log.info(f"Payload: {payload}")
+        resp = requests.post(
+            endpoint,
+            json=payload,
+            headers=headers,
+            verify=False,
+            timeout=15
+        )
+        success = resp.status_code in (200, 204)
+        if not success:
             log.warning(f"→ {resp.status_code}: {resp.text}")
 
         if success:
