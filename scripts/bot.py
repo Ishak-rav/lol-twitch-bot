@@ -92,8 +92,7 @@ class OBSController:
 
     def connect(self) -> bool:
         try:
-            self.ws = websocket.WebSocket()
-            self.ws.connect(
+            self.ws = websocket.create_connection(
                 f"ws://{self.host}:{self.port}",
                 subprotocols=["obswebsocket.v5"]
             )
