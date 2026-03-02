@@ -294,26 +294,21 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             "Accept": "application/json"
         }
 
-        # Riot ID complet (format "Name#TAG")
-        riot_id = active_player["name"]  # ex: "KC Retlaw#EUW"
-
-        payload = {
-            "dropInSpectateGameId": riot_id,
-            "gameQueueType": "",
-            "allowObserveMode": "ALL",
-            "puuid": active_player["puuid"]
-        }
-
-        # Essaie les deux variantes d'endpoint connues
-        endpoints = [
-            f"https://127.0.0.1:{port}/lol-spectator/v1/spectate/launch",
-            f"https://127.0.0.1:{port}/lol/spectator/v1/spectate/launch",
-        ]
+        # Essaie avec le nom seul (sans #TAG) puis avec Riot ID complet
+        display_name = active_player["display_name"]   # ex: "KC Retlaw"
+        riot_id      = active_player["name"]           # ex: "KC Retlaw#EUW"
+        endpoint     = f"https://127.0.0.1:{port}/lol-spectator/v1/spectate/launch"
 
         log.info(f"Lancement spectateur via LCU: {riot_id} (game {game['gameId']})")
         success = False
-        for endpoint in endpoints:
-            log.info(f"Essai endpoint: {endpoint}")
+        for name_variant in [display_name, riot_id]:
+            payload = {
+                "dropInSpectateGameId": name_variant,
+                "gameQueueType": "",
+                "allowObserveMode": "ALL",
+                "puuid": active_player["puuid"]
+            }
+            log.info(f"Essai avec dropInSpectateGameId='{name_variant}'")
             resp = requests.post(
                 endpoint,
                 json=payload,
@@ -324,7 +319,7 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             if resp.status_code in (200, 204):
                 success = True
                 break
-            log.warning(f"Endpoint {endpoint} → {resp.status_code}: {resp.text[:200]}")
+            log.warning(f"→ {resp.status_code}: {resp.text}")
 
         if success:
             log.info("Spectateur lancé via LCU ✅")
