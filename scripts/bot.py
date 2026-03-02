@@ -227,17 +227,28 @@ def launch_spectator(game: dict, config: dict):
     try:
         game_id = game["gameId"]
         observer_key = game["observers"]["encryptionKey"]
-        lol_path = config["lol_path"]
+
+        # Exécutable du jeu (pas LeagueClient.exe mais le vrai Game exe)
+        lol_game_path = config.get("lol_game_path", "")
+        if not lol_game_path:
+            # Dérive automatiquement depuis lol_path
+            base = config["lol_path"].replace("LeagueClient.exe", "")
+            lol_game_path = base + "Game\\League of Legends.exe"
 
         # Serveur spectateur EUW
         spectate_server = "spectator.euw1.lol.pvp.net:80"
 
         cmd = [
-            lol_path,
-            f"spectator {spectate_server} {observer_key} {game_id} EUW1"
+            lol_game_path,
+            "spectator",
+            spectate_server,
+            observer_key,
+            str(game_id),
+            "EUW1"
         ]
         log.info(f"Lancement spectateur: game {game_id}")
-        subprocess.Popen(cmd)
+        log.info(f"Commande: {' '.join(cmd)}")
+        subprocess.Popen(cmd, cwd=lol_game_path.replace("League of Legends.exe", ""))
     except Exception as e:
         log.error(f"Lancement spectateur échoué: {e}")
 
