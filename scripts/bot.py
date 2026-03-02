@@ -251,6 +251,22 @@ def is_lol_client_running() -> bool:
     return False
 
 
+def debug_lcu_friends(port: str, headers: dict):
+    """Debug: affiche les amis en game et leur présence."""
+    try:
+        resp = requests.get(
+            f"https://127.0.0.1:{port}/lol-chat/v1/friends",
+            headers=headers, verify=False, timeout=10
+        )
+        friends = resp.json()
+        in_game = [f for f in friends if f.get("availability") in ("ingame", "inGame")]
+        log.info(f"Amis en game: {[f.get('gameName', f.get('name', '?')) for f in in_game]}")
+        for f in in_game:
+            log.info(f"  → {f.get('gameName')}#{f.get('gameTag')} | presence: {f.get('lol', {})}")
+    except Exception as e:
+        log.warning(f"debug_lcu_friends erreur: {e}")
+
+
 def ensure_lol_client_running(config: dict) -> bool:
     """Lance le client LoL si nécessaire et attend qu'il soit prêt."""
     if is_lol_client_running():
@@ -324,6 +340,9 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
                 "gameId": game_id,
             },
         ]
+
+        # Debug: liste les amis en game et leur présence
+        debug_lcu_friends(port, headers)
 
         log.info(f"Lancement spectateur via LCU v1: {riot_id} (game {game_id})")
         success = False
