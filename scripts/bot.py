@@ -300,46 +300,41 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
 
         base_url = f"https://127.0.0.1:{port}"
 
-        # Essaie différents formats de payload connus
+        display_name = active_player["display_name"]  # "KC Retlaw"
+
+        # v1 attend targetSummonerName + les infos de spectate
         payloads_to_try = [
-            # Format 1 : adresse avec port intégré
             {
+                "targetSummonerName": display_name,
                 "serverAddress": "spectator.euw1.lol.pvp.net:80",
                 "encryptionKey": encryption_key,
                 "gameId": game_id,
             },
-            # Format 2 : champs séparés
             {
+                "targetSummonerName": display_name,
                 "serverAddress": "spectator.euw1.lol.pvp.net",
                 "serverPort": 80,
                 "encryptionKey": encryption_key,
                 "gameId": game_id,
             },
-            # Format 3 : noms de champs alternatifs
             {
+                "targetSummonerName": riot_id,
                 "serverAddress": "spectator.euw1.lol.pvp.net:80",
-                "spectatorEncryptionKey": encryption_key,
+                "encryptionKey": encryption_key,
                 "gameId": game_id,
             },
         ]
 
-        endpoints_to_try = [
-            f"{base_url}/lol-gameflow/v2/spectate/launch",
-            f"{base_url}/lol-gameflow/v1/spectate/launch",
-        ]
-
-        log.info(f"Lancement spectateur via LCU gameflow: {riot_id} (game {game_id})")
+        log.info(f"Lancement spectateur via LCU v1: {riot_id} (game {game_id})")
         success = False
-        for ep in endpoints_to_try:
-            for pl in payloads_to_try:
-                resp = requests.post(ep, json=pl, headers=headers, verify=False, timeout=15)
-                if resp.status_code in (200, 204):
-                    log.info(f"✅ Succès avec endpoint={ep}, payload={pl}")
-                    success = True
-                    break
-                log.warning(f"→ {ep} payload={list(pl.keys())} → {resp.status_code}: {resp.text[:150]}")
-            if success:
+        endpoint = f"{base_url}/lol-gameflow/v1/spectate/launch"
+        for pl in payloads_to_try:
+            resp = requests.post(endpoint, json=pl, headers=headers, verify=False, timeout=15)
+            if resp.status_code in (200, 204):
+                log.info(f"✅ Succès! payload keys={list(pl.keys())}")
+                success = True
                 break
+            log.warning(f"→ payload={list(pl.keys())} → {resp.status_code}: {resp.text[:200]}")
 
         if success:
             log.info("Spectateur lancé via LCU ✅")
