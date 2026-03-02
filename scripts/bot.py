@@ -298,28 +298,48 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
         encryption_key = game["observers"]["encryptionKey"]
         game_id        = game["gameId"]
 
-        # Appel direct à gameflow avec la clé qu'on a récupérée depuis la Riot API
-        endpoint = f"https://127.0.0.1:{port}/lol-gameflow/v2/spectate/launch"
-        payload  = {
-            "serverAddress": "spectator.euw1.lol.pvp.net",
-            "serverPort": 80,
-            "encryptionKey": encryption_key,
-            "gameId": game_id,
-            "summonerId": 0
-        }
+        base_url = f"https://127.0.0.1:{port}"
+
+        # Essaie différents formats de payload connus
+        payloads_to_try = [
+            # Format 1 : adresse avec port intégré
+            {
+                "serverAddress": "spectator.euw1.lol.pvp.net:80",
+                "encryptionKey": encryption_key,
+                "gameId": game_id,
+            },
+            # Format 2 : champs séparés
+            {
+                "serverAddress": "spectator.euw1.lol.pvp.net",
+                "serverPort": 80,
+                "encryptionKey": encryption_key,
+                "gameId": game_id,
+            },
+            # Format 3 : noms de champs alternatifs
+            {
+                "serverAddress": "spectator.euw1.lol.pvp.net:80",
+                "spectatorEncryptionKey": encryption_key,
+                "gameId": game_id,
+            },
+        ]
+
+        endpoints_to_try = [
+            f"{base_url}/lol-gameflow/v2/spectate/launch",
+            f"{base_url}/lol-gameflow/v1/spectate/launch",
+        ]
 
         log.info(f"Lancement spectateur via LCU gameflow: {riot_id} (game {game_id})")
-        log.info(f"Payload: {payload}")
-        resp = requests.post(
-            endpoint,
-            json=payload,
-            headers=headers,
-            verify=False,
-            timeout=15
-        )
-        success = resp.status_code in (200, 204)
-        if not success:
-            log.warning(f"→ {resp.status_code}: {resp.text}")
+        success = False
+        for ep in endpoints_to_try:
+            for pl in payloads_to_try:
+                resp = requests.post(ep, json=pl, headers=headers, verify=False, timeout=15)
+                if resp.status_code in (200, 204):
+                    log.info(f"✅ Succès avec endpoint={ep}, payload={pl}")
+                    success = True
+                    break
+                log.warning(f"→ {ep} payload={list(pl.keys())} → {resp.status_code}: {resp.text[:150]}")
+            if success:
+                break
 
         if success:
             log.info("Spectateur lancé via LCU ✅")
