@@ -306,6 +306,32 @@ def ensure_lol_client_running(config: dict) -> bool:
     return False
 
 
+def launch_spectator_bat(game: dict, config: dict):
+    """Lance le spectateur via un .bat temporaire + os.startfile (ShellExecute)."""
+    try:
+        import tempfile
+        game_id        = game["gameId"]
+        encryption_key = game["observers"]["encryptionKey"]
+        base           = os.path.dirname(config["lol_path"])
+        lol_game_path  = os.path.join(base, "Game", "League of Legends.exe")
+        cwd            = os.path.join(base, "Game")
+        spectate_server = "spectator.euw1.lol.pvp.net:80"
+
+        bat_path = os.path.join(tempfile.gettempdir(), "lol_spectate.bat")
+        with open(bat_path, "w") as f:
+            f.write(f'@echo off\n')
+            f.write(f'cd /d "{cwd}"\n')
+            f.write(f'"League of Legends.exe" spectator {spectate_server} "{encryption_key}" {game_id} EUW1\n')
+
+        log.info(f"Lancement spectateur via .bat: {bat_path}")
+        log.info(f"Commande: League of Legends.exe spectator {spectate_server} [KEY] {game_id} EUW1")
+        os.startfile(bat_path)
+        return True
+    except Exception as e:
+        log.error(f"Lancement .bat échoué: {e}")
+        return False
+
+
 def launch_spectator(game: dict, config: dict, active_player: dict):
     """Lance le spectateur via l'API LCU du client LoL."""
     try:
@@ -360,7 +386,11 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             },
         ]
 
-        # Debug: liste les amis en game et dump endpoints spectate
+        # Tente le lancement via .bat (ShellExecute) — plus fiable que LCU
+        if launch_spectator_bat(game, config):
+            return
+
+        # Fallback: debug LCU
         debug_lcu_friends(port, headers)
         dump_lcu_spectate_endpoints(port, headers, config)
 
