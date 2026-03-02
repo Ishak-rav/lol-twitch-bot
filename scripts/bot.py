@@ -294,17 +294,19 @@ def dump_lcu_spectate_endpoints(port: str, headers: dict, config: dict):
 
 
 def debug_lcu_friends(port: str, headers: dict):
-    """Debug: affiche les amis en game et leur présence."""
+    """Debug: affiche tous les amis et leur statut."""
     try:
         resp = requests.get(
             f"https://127.0.0.1:{port}/lol-chat/v1/friends",
             headers=headers, verify=False, timeout=10
         )
         friends = resp.json()
-        in_game = [f for f in friends if f.get("availability") in ("ingame", "inGame")]
-        log.info(f"Amis en game: {[f.get('gameName', f.get('name', '?')) for f in in_game]}")
-        for f in in_game:
-            log.info(f"  → {f.get('gameName')}#{f.get('gameTag')} | presence: {f.get('lol', {})}")
+        log.info(f"Total amis LCU: {len(friends)}")
+        for f in friends:
+            avail = f.get("availability", "?")
+            name = f.get("gameName", f.get("name", "?"))
+            tag = f.get("gameTag", "")
+            log.info(f"  → {name}#{tag} | availability={avail} | lol={f.get('lol', {})}")
     except Exception as e:
         log.warning(f"debug_lcu_friends erreur: {e}")
 
@@ -412,26 +414,8 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             },
         ]
 
-        # Tente le lancement via .bat (ShellExecute) — plus fiable que LCU
-        if launch_spectator_bat(game, config):
-            return
-
-        # Fallback: debug LCU
+        # Debug amis
         debug_lcu_friends(port, headers)
-        dump_lcu_spectate_endpoints(port, headers, config)
-        dump_lcu_help(port, headers)
-
-        # Essai v2 avec variantes de noms de champ
-        log.info("Essai v2 avec variantes de champs...")
-        v2 = f"https://127.0.0.1:{port}/lol-gameflow/v2/spectate/launch"
-        for key_field in ["spectatorKey", "observerEncryptionKey", "key"]:
-            for gid in [game["gameId"], str(game["gameId"])]:
-                pl = {"serverAddress": "spectator.euw1.lol.pvp.net:80", key_field: game["observers"]["encryptionKey"], "gameId": gid}
-                r = requests.post(v2, json=pl, headers=headers, verify=False, timeout=10)
-                if r.status_code in (200, 204):
-                    log.info(f"✅ v2 SUCCÈS: {key_field}, gameId={type(gid).__name__}")
-                    break
-                log.warning(f"v2 {key_field} gameId={type(gid).__name__}: {r.status_code} {r.text[:80]}")
 
         log.info(f"Lancement spectateur via LCU v1: {riot_id} (game {game_id})")
         success = False
@@ -466,11 +450,14 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
 
         if success:
             log.info("Spectateur lancé via LCU ✅")
+            return True
         else:
-            log.error("Tous les endpoints LCU ont échoué")
+            log.error("Spectateur LCU échoué — les joueurs doivent être amis avec IzakSpectate")
+            return False
 
     except Exception as e:
         log.error(f"Lancement spectateur échoué: {e}")
+        return False
 
 
 # ─── Bot principal ───────────────────────────────────────────────────────────
@@ -508,8 +495,9 @@ def run():
         password=config["obs_websocket"]["password"],
     )
 
-    current_game_id = None  # ID de la game actuellement streamée
-    obs_connected = False
+    current_game_id   = None   # ID de la game actuellement streamée
+    spectator_launched = False  # True si le spectateur a été lancé avec succès
+    obs_connected      = False
 
     while True:
         try:
@@ -535,7 +523,7 @@ def run():
                     game_found = game
                     active_player = player
                     log.info(f"🎮 {player['display_name']} est en game! (ID: {game['gameId']})")
-                    break  # On prend le premier joueur en game
+                    break
 
             if game_found and active_player:
                 game_id = game_found["gameId"]
@@ -543,24 +531,26 @@ def run():
                 if current_game_id != game_id:
                     # Nouvelle game détectée
                     log.info(f"Nouvelle game détectée: {game_id}")
-                    current_game_id = game_id
+                    current_game_id    = game_id
+                    spectator_launched = False
 
                     # Titre Twitch
                     title = build_stream_title(active_player, game_found)
                     update_twitch_title(title, config)
 
-                    # Lance le spectateur LoL
-                    launch_spectator(game_found, config, active_player)
-
-                    # Attends 15s que LoL se charge avant de démarrer OBS
-                    log.info("Attente chargement LoL (15s)...")
-                    time.sleep(15)
-
-                    # Démarre le stream OBS
+                    # Démarre le stream OBS immédiatement
                     if not obs.is_streaming():
                         obs.start_stream()
-                else:
-                    log.debug(f"Game {game_id} toujours en cours, on continue...")
+
+                # Retente le spectateur si pas encore lancé
+                if not spectator_launched:
+                    log.info("Tentative lancement spectateur...")
+                    spectator_launched = launch_spectator(game_found, config, active_player)
+                    if spectator_launched:
+                        log.info("✅ Spectateur lancé, attente chargement (15s)...")
+                        time.sleep(15)
+                    else:
+                        log.warning("Spectateur non lancé, retry au prochain poll...")
 
             else:
                 # Personne en game
