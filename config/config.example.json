@@ -1,0 +1,23 @@
+{
+  "riot_api_key": "RGAPI-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX",
+  "twitch_stream_key": "live_XXXXXXXXXX_XXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "twitch_channel_name": "TON_PSEUDO_TWITCH",
+  "twitch_client_id": "",
+  "twitch_access_token": "",
+  "obs_websocket": {
+    "host": "localhost",
+    "port": 4455,
+    "password": "TON_MOT_DE_PASSE_OBS_WEBSOCKET"
+  },
+  "poll_interval_seconds": 30,
+  "region": "euw1",
+  "routing": "europe",
+  "lol_path": "C:\\Riot Games\\League of Legends\\LeagueClient.exe",
+  "players": [
+    {
+      "name": "PuffGoutJool#SLY",
+      "puuid": "ZdsqL41IOdmXIR2-e-lKfYkeUPTr0FuagjuAxF-ZxSqyj1tyoauqcOKIsatWb38geAfXzUcuhAs9bA",
+      "display_name": "PuffGoutJool"
+    }
+  ]
+}
