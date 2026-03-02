@@ -93,8 +93,7 @@ class OBSController:
     def connect(self) -> bool:
         try:
             self.ws = websocket.create_connection(
-                f"ws://{self.host}:{self.port}",
-                subprotocols=["obswebsocket.v5"]
+                f"ws://{self.host}:{self.port}"
             )
             # Handshake Hello
             hello = jsonlib.loads(self.ws.recv())
