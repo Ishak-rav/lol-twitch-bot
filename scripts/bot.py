@@ -10,8 +10,13 @@ import logging
 import subprocess
 import sys
 import os
+import base64
+import urllib3
 import requests
 import websocket
+import psutil
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
@@ -222,33 +227,97 @@ def update_twitch_title(title: str, config: dict):
 
 
 # ─── LoL Spectateur ──────────────────────────────────────────────────────────
-def launch_spectator(game: dict, config: dict):
-    """Lance le client LoL en mode spectateur sur la game en cours."""
+def get_lol_base_dir(config: dict) -> str:
+    """Retourne le dossier racine de LoL."""
+    return os.path.dirname(config["lol_path"])
+
+
+def read_lockfile(config: dict) -> dict | None:
+    """Lit le fichier lockfile du client LoL pour obtenir port + password."""
+    lockfile_path = os.path.join(get_lol_base_dir(config), "lockfile")
+    if not os.path.exists(lockfile_path):
+        return None
+    with open(lockfile_path, "r") as f:
+        parts = f.read().strip().split(":")
+    # Format: name:pid:port:password:protocol
+    return {"port": parts[2], "password": parts[3]}
+
+
+def is_lol_client_running() -> bool:
+    """Vérifie si le client LoL est en cours d'exécution."""
+    for proc in psutil.process_iter(["name"]):
+        if proc.info["name"] in ("LeagueClient.exe", "LeagueClientUx.exe"):
+            return True
+    return False
+
+
+def ensure_lol_client_running(config: dict) -> bool:
+    """Lance le client LoL si nécessaire et attend qu'il soit prêt."""
+    if is_lol_client_running():
+        log.info("Client LoL déjà lancé ✅")
+        return True
+
+    log.info("Lancement du client LoL...")
+    subprocess.Popen([config["lol_path"]])
+
+    # Attend jusqu'à 120s que le lockfile apparaisse
+    for _ in range(24):
+        time.sleep(5)
+        if read_lockfile(config):
+            log.info("Client LoL prêt ✅")
+            return True
+
+    log.error("Timeout: le client LoL n'a pas démarré")
+    return False
+
+
+def launch_spectator(game: dict, config: dict, active_player: dict):
+    """Lance le spectateur via l'API LCU du client LoL."""
     try:
-        game_id = game["gameId"]
-        observer_key = game["observers"]["encryptionKey"]
+        # S'assure que le client est lancé
+        if not ensure_lol_client_running(config):
+            return
 
-        # Exécutable du jeu (pas LeagueClient.exe mais le vrai Game exe)
-        lol_game_path = config.get("lol_game_path", "")
-        if not lol_game_path:
-            # Dérive automatiquement depuis lol_path
-            base = config["lol_path"].replace("LeagueClient.exe", "")
-            lol_game_path = base + "Game\\League of Legends.exe"
+        # Attend un peu que le lockfile soit stable
+        time.sleep(3)
+        creds = read_lockfile(config)
+        if not creds:
+            log.error("Lockfile introuvable — client LoL non prêt")
+            return
 
-        # Serveur spectateur EUW
-        spectate_server = "spectator.euw1.lol.pvp.net:80"
+        port = creds["port"]
+        password = creds["password"]
+        auth = base64.b64encode(f"riot:{password}".encode()).decode()
+        headers = {
+            "Authorization": f"Basic {auth}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
 
-        cmd = [
-            lol_game_path,
-            "spectator",
-            spectate_server,
-            observer_key,
-            str(game_id),
-            "EUW1"
-        ]
-        log.info(f"Lancement spectateur: game {game_id}")
-        log.info(f"Commande: {' '.join(cmd)}")
-        subprocess.Popen(cmd, cwd=lol_game_path.replace("League of Legends.exe", ""))
+        # Nom du joueur à spectate (sans le #TAG)
+        summoner_name = active_player["display_name"]
+
+        payload = {
+            "dropInSpectateGameId": summoner_name,
+            "gameQueueType": "",
+            "allowObserveMode": "ALL",
+            "puuid": active_player["puuid"]
+        }
+
+        log.info(f"Lancement spectateur via LCU: {summoner_name} (game {game['gameId']})")
+        resp = requests.post(
+            f"https://127.0.0.1:{port}/lol/spectator/v1/spectate/launch",
+            json=payload,
+            headers=headers,
+            verify=False,
+            timeout=15
+        )
+
+        if resp.status_code in (200, 204):
+            log.info("Spectateur lancé via LCU ✅")
+        else:
+            log.error(f"LCU spectate échoué: {resp.status_code} — {resp.text}")
+
     except Exception as e:
         log.error(f"Lancement spectateur échoué: {e}")
 
@@ -330,7 +399,7 @@ def run():
                     update_twitch_title(title, config)
 
                     # Lance le spectateur LoL
-                    launch_spectator(game_found, config)
+                    launch_spectator(game_found, config, active_player)
 
                     # Attends 15s que LoL se charge avant de démarrer OBS
                     log.info("Attente chargement LoL (15s)...")
