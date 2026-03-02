@@ -321,7 +321,10 @@ def launch_spectator_bat(game: dict, config: dict):
         with open(bat_path, "w") as f:
             f.write(f'@echo off\n')
             f.write(f'cd /d "{cwd}"\n')
+            f.write(f'echo Lancement spectateur...\n')
             f.write(f'"League of Legends.exe" spectator {spectate_server} "{encryption_key}" {game_id} EUW1\n')
+            f.write(f'echo Terminé avec code: %errorlevel%\n')
+            f.write(f'pause\n')
 
         log.info(f"Lancement spectateur via .bat: {bat_path}")
         log.info(f"Commande: League of Legends.exe spectator {spectate_server} [KEY] {game_id} EUW1")
