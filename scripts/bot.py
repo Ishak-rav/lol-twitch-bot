@@ -328,13 +328,33 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
         log.info(f"Lancement spectateur via LCU v1: {riot_id} (game {game_id})")
         success = False
         endpoint = f"{base_url}/lol-gameflow/v1/spectate/launch"
-        for pl in payloads_to_try:
-            resp = requests.post(endpoint, json=pl, headers=headers, verify=False, timeout=15)
+
+        # Le v1 attend peut-être juste le nom en string brut comme body
+        name_variants = [display_name, riot_id]
+        for name in name_variants:
+            log.info(f"Essai string body: '{name}'")
+            resp = requests.post(
+                endpoint,
+                data=json.dumps(name),   # body = "KC Retlaw" (string JSON)
+                headers=headers,
+                verify=False,
+                timeout=15
+            )
             if resp.status_code in (200, 204):
-                log.info(f"✅ Succès! payload keys={list(pl.keys())}")
+                log.info(f"✅ Succès avec body='{name}'")
                 success = True
                 break
-            log.warning(f"→ payload={list(pl.keys())} → {resp.status_code}: {resp.text[:200]}")
+            log.warning(f"→ '{name}' → {resp.status_code}: {resp.text[:200]}")
+
+        # Fallback : essai avec objet JSON classique
+        if not success:
+            for pl in payloads_to_try:
+                resp = requests.post(endpoint, json=pl, headers=headers, verify=False, timeout=15)
+                if resp.status_code in (200, 204):
+                    log.info(f"✅ Succès! payload keys={list(pl.keys())}")
+                    success = True
+                    break
+                log.warning(f"→ payload={list(pl.keys())} → {resp.status_code}: {resp.text[:200]}")
 
         if success:
             log.info("Spectateur lancé via LCU ✅")
