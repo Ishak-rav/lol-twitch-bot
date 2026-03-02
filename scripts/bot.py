@@ -294,29 +294,44 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             "Accept": "application/json"
         }
 
-        # Nom du joueur à spectate (sans le #TAG)
-        summoner_name = active_player["display_name"]
+        # Riot ID complet (format "Name#TAG")
+        riot_id = active_player["name"]  # ex: "KC Retlaw#EUW"
 
         payload = {
-            "dropInSpectateGameId": summoner_name,
+            "dropInSpectateGameId": riot_id,
             "gameQueueType": "",
             "allowObserveMode": "ALL",
             "puuid": active_player["puuid"]
         }
 
-        log.info(f"Lancement spectateur via LCU: {summoner_name} (game {game['gameId']})")
-        resp = requests.post(
+        # Essaie les deux variantes d'endpoint connues
+        endpoints = [
+            f"https://127.0.0.1:{port}/lol-spectator/v1/spectate/launch",
             f"https://127.0.0.1:{port}/lol/spectator/v1/spectate/launch",
-            json=payload,
-            headers=headers,
-            verify=False,
-            timeout=15
-        )
+        ]
 
-        if resp.status_code in (200, 204):
+        log.info(f"Lancement spectateur via LCU: {riot_id} (game {game['gameId']})")
+        success = False
+        for endpoint in endpoints:
+            log.info(f"Essai endpoint: {endpoint}")
+            resp = requests.post(
+                endpoint,
+                json=payload,
+                headers=headers,
+                verify=False,
+                timeout=15
+            )
+            if resp.status_code in (200, 204):
+                success = True
+                break
+            log.warning(f"Endpoint {endpoint} → {resp.status_code}: {resp.text[:200]}")
+
+        if success:
+
+        if success:
             log.info("Spectateur lancé via LCU ✅")
         else:
-            log.error(f"LCU spectate échoué: {resp.status_code} — {resp.text}")
+            log.error("Tous les endpoints LCU ont échoué")
 
     except Exception as e:
         log.error(f"Lancement spectateur échoué: {e}")
