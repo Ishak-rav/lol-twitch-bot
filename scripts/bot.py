@@ -338,7 +338,7 @@ def run():
                     obs.stop_stream()
                     current_game_id = None
                 else:
-                    log.debug("Aucun joueur en game.")
+                    log.info("Aucun joueur en game, prochain check dans 30s...")
 
         except KeyboardInterrupt:
             log.info("Arrêt manuel du bot.")
