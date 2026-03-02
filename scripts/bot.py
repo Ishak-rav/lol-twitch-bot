@@ -327,8 +327,6 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             log.warning(f"Endpoint {endpoint} → {resp.status_code}: {resp.text[:200]}")
 
         if success:
-
-        if success:
             log.info("Spectateur lancé via LCU ✅")
         else:
             log.error("Tous les endpoints LCU ont échoué")
