@@ -251,50 +251,94 @@ def is_lol_client_running() -> bool:
     return False
 
 
-def dump_lcu_help(port: str, headers: dict):
-    """Dump toutes les fonctions LCU liées à spectate via POST /Help."""
+def dump_lcu_full_diagnostic(port: str, headers: dict):
+    """
+    Dump diagnostique complet LCU :
+    - /Help (spectate)
+    - /swagger/v3/openapi.json (spectate paths)
+    - /lol-gameflow/v1/session
+    - /lol-chat/v1/friends (champs lol complets)
+    Sauvegarde tout dans logs/lcu_diagnostic.json
+    """
+    diag = {}
+    base = f"https://127.0.0.1:{port}"
+    log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
+
+    # 1. /Help — toutes les fonctions spectate
     try:
-        resp = requests.post(
-            f"https://127.0.0.1:{port}/Help",
-            json={"format": "Full"},
-            headers=headers, verify=False, timeout=15
-        )
-        data = resp.json()
-        # Filtre sur spectate
+        r = requests.post(f"{base}/Help", json={"format": "Full"}, headers=headers, verify=False, timeout=15)
+        data = r.json()
         if isinstance(data, dict):
-            functions = data.get("functions", data.get("events", {}))
-            spectate = {k: v for k, v in functions.items() if "spectate" in k.lower()}
+            # Cherche dans functions, events, types
+            all_items = {}
+            for section in ("functions", "events", "types"):
+                all_items.update(data.get(section, {}))
+            spectate_fns = {k: v for k, v in all_items.items() if "spectate" in k.lower()}
+        elif isinstance(data, list):
+            spectate_fns = [x for x in data if "spectate" in str(x).lower()]
         else:
-            spectate = [x for x in data if "spectate" in str(x).lower()]
-        out = os.path.join(os.path.dirname(__file__), "..", "logs", "lcu_help_spectate.json")
-        with open(out, "w") as f:
-            json.dump(spectate, f, indent=2)
-        log.info(f"LCU /Help spectate sauvegardé: {list(spectate.keys()) if isinstance(spectate, dict) else spectate[:5]}")
+            spectate_fns = {}
+        diag["help_spectate"] = spectate_fns
+        log.info(f"[DIAG] /Help spectate keys: {list(spectate_fns.keys()) if isinstance(spectate_fns, dict) else len(spectate_fns)}")
+        # Sauvegarde aussi le help complet pour analyse manuelle
+        with open(os.path.join(log_dir, "lcu_help_full.json"), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
     except Exception as e:
-        log.warning(f"dump_lcu_help erreur: {e}")
+        diag["help_spectate"] = f"ERREUR: {e}"
+        log.warning(f"[DIAG] /Help erreur: {e}")
+
+    # 2. Swagger — tous les paths spectate (v3 + v2)
+    for swagger_path in ("/swagger/v3/openapi.json", "/swagger/v2/swagger.json"):
+        try:
+            r = requests.get(f"{base}{swagger_path}", headers=headers, verify=False, timeout=15)
+            swagger = r.json()
+            paths = swagger.get("paths", {})
+            spectate_paths = {k: v for k, v in paths.items() if "spectate" in k.lower()}
+            if spectate_paths:
+                diag[f"swagger{swagger_path}"] = spectate_paths
+                log.info(f"[DIAG] Swagger spectate paths ({swagger_path}): {list(spectate_paths.keys())}")
+                break
+        except Exception as e:
+            log.warning(f"[DIAG] Swagger {swagger_path} erreur: {e}")
+
+    # 3. /lol-gameflow/v1/session
+    try:
+        r = requests.get(f"{base}/lol-gameflow/v1/session", headers=headers, verify=False, timeout=10)
+        diag["gameflow_session"] = r.json() if r.status_code == 200 else f"HTTP {r.status_code}: {r.text[:200]}"
+        log.info(f"[DIAG] gameflow session phase: {diag['gameflow_session'].get('phase') if isinstance(diag['gameflow_session'], dict) else diag['gameflow_session']}")
+    except Exception as e:
+        diag["gameflow_session"] = f"ERREUR: {e}"
+
+    # 4. /lol-chat/v1/friends — données complètes
+    try:
+        r = requests.get(f"{base}/lol-chat/v1/friends", headers=headers, verify=False, timeout=10)
+        friends = r.json() if r.status_code == 200 else []
+        diag["friends_count"] = len(friends)
+        in_game = [f for f in friends if f.get("availability") in ("inGame", "dnd")]
+        diag["friends_in_game"] = in_game
+        log.info(f"[DIAG] Amis total: {len(friends)} | En game: {len(in_game)}")
+        for f in in_game:
+            name = f.get("gameName", f.get("name", "?"))
+            tag = f.get("gameTag", "")
+            log.info(f"  [IN GAME] {name}#{tag} | id={f.get('id')} | lol={json.dumps(f.get('lol', {}))}")
+    except Exception as e:
+        diag["friends_in_game"] = f"ERREUR: {e}"
+
+    # 5. Sauvegarde complète
+    out = os.path.join(log_dir, "lcu_diagnostic.json")
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(diag, f, indent=2, ensure_ascii=False)
+    log.info(f"[DIAG] Diagnostic complet sauvegardé: {out}")
+    return diag
 
 
 def dump_lcu_spectate_endpoints(port: str, headers: dict, config: dict):
-    """Fetch le swagger LCU et sauvegarde les endpoints spectate."""
-    try:
-        resp = requests.get(
-            f"https://127.0.0.1:{port}/swagger/v3/openapi.json",
-            headers=headers, verify=False, timeout=15
-        )
-        swagger = resp.json()
-        paths = swagger.get("paths", {})
-        spectate_paths = {k: v for k, v in paths.items() if "spectate" in k.lower()}
-        out_path = os.path.join(os.path.dirname(__file__), "..", "logs", "lcu_spectate_endpoints.json")
-        with open(out_path, "w") as f:
-            json.dump(spectate_paths, f, indent=2)
-        log.info(f"Endpoints spectate sauvegardés dans logs/lcu_spectate_endpoints.json")
-        log.info(f"Endpoints trouvés: {list(spectate_paths.keys())}")
-    except Exception as e:
-        log.warning(f"dump_lcu_spectate_endpoints erreur: {e}")
+    """Alias de compatibilité → appelle dump_lcu_full_diagnostic."""
+    dump_lcu_full_diagnostic(port, headers)
 
 
 def debug_lcu_friends(port: str, headers: dict):
-    """Debug: affiche tous les amis et leur statut."""
+    """Debug: affiche tous les amis et leur statut (avec champ lol complet)."""
     try:
         resp = requests.get(
             f"https://127.0.0.1:{port}/lol-chat/v1/friends",
@@ -302,11 +346,14 @@ def debug_lcu_friends(port: str, headers: dict):
         )
         friends = resp.json()
         log.info(f"Total amis LCU: {len(friends)}")
+        in_game = [f for f in friends if f.get("availability") in ("inGame", "dnd", "chat")]
+        log.info(f"Amis en game/connectés: {len(in_game)}")
         for f in friends:
             avail = f.get("availability", "?")
             name = f.get("gameName", f.get("name", "?"))
             tag = f.get("gameTag", "")
-            log.info(f"  → {name}#{tag} | availability={avail} | lol={f.get('lol', {})}")
+            lol_field = f.get("lol", {})
+            log.info(f"  → {name}#{tag} | avail={avail} | id={f.get('id', '?')} | lol={json.dumps(lol_field)}")
     except Exception as e:
         log.warning(f"debug_lcu_friends erreur: {e}")
 
@@ -360,19 +407,39 @@ def launch_spectator_bat(game: dict, config: dict):
         return False
 
 
+def get_friend_xmpp_id(port: str, headers: dict, display_name: str, puuid: str) -> str | None:
+    """Récupère l'id XMPP LCU d'un ami par son gameName ou puuid."""
+    try:
+        resp = requests.get(
+            f"https://127.0.0.1:{port}/lol-chat/v1/friends",
+            headers=headers, verify=False, timeout=10
+        )
+        friends = resp.json()
+        for f in friends:
+            fname = f.get("gameName", f.get("name", ""))
+            fpuuid = f.get("puuid", "")
+            if fname.lower() == display_name.lower() or fpuuid == puuid:
+                xmpp_id = f.get("id", "")
+                log.info(f"Ami trouvé: {fname} | id XMPP={xmpp_id} | availability={f.get('availability')}")
+                return xmpp_id
+    except Exception as e:
+        log.warning(f"get_friend_xmpp_id erreur: {e}")
+    return None
+
+
 def launch_spectator(game: dict, config: dict, active_player: dict):
     """Lance le spectateur via l'API LCU du client LoL."""
     try:
         # S'assure que le client est lancé
         if not ensure_lol_client_running(config):
-            return
+            return False
 
         # Attend un peu que le lockfile soit stable
         time.sleep(3)
         creds = read_lockfile(config)
         if not creds:
             log.error("Lockfile introuvable — client LoL non prêt")
-            return
+            return False
 
         port = creds["port"]
         password = creds["password"]
@@ -383,77 +450,115 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
             "Accept": "application/json"
         }
 
-        riot_id        = active_player["name"]
+        riot_id        = active_player["name"]          # "KC Retlaw#EUW"
+        puuid          = active_player["puuid"]
         encryption_key = game["observers"]["encryptionKey"]
         game_id        = game["gameId"]
+        display_name   = active_player["display_name"]  # "KC Retlaw"
+        base_url       = f"https://127.0.0.1:{port}"
 
-        base_url = f"https://127.0.0.1:{port}"
+        # Diagnostic complet au 1er essai
+        dump_lcu_full_diagnostic(port, headers)
 
-        display_name = active_player["display_name"]  # "KC Retlaw"
+        # Récupère l'id XMPP de l'ami si disponible
+        xmpp_id = get_friend_xmpp_id(port, headers, display_name, puuid)
 
-        # v1 attend targetSummonerName + les infos de spectate
-        payloads_to_try = [
-            {
-                "targetSummonerName": display_name,
-                "serverAddress": "spectator.euw1.lol.pvp.net:80",
-                "encryptionKey": encryption_key,
-                "gameId": game_id,
-            },
-            {
-                "targetSummonerName": display_name,
-                "serverAddress": "spectator.euw1.lol.pvp.net",
-                "serverPort": 80,
-                "encryptionKey": encryption_key,
-                "gameId": game_id,
-            },
-            {
-                "targetSummonerName": riot_id,
-                "serverAddress": "spectator.euw1.lol.pvp.net:80",
-                "encryptionKey": encryption_key,
-                "gameId": game_id,
-            },
-        ]
-
-        # Debug amis
-        debug_lcu_friends(port, headers)
-
-        log.info(f"Lancement spectateur via LCU v1: {riot_id} (game {game_id})")
+        log.info(f"Tentative spectate LCU: {riot_id} | gameId={game_id} | xmpp_id={xmpp_id}")
         success = False
-        endpoint = f"{base_url}/lol-gameflow/v1/spectate/launch"
+        endpoint_v1 = f"{base_url}/lol-gameflow/v1/spectate/launch"
 
-        # Le v1 attend peut-être juste le nom en string brut comme body
+        # ── Séquence 1 : v1 avec string body (nom, riot id, xmpp id, puuid) ──
         name_variants = [display_name, riot_id]
+        if xmpp_id:
+            name_variants.insert(0, xmpp_id)
+        # Essai aussi avec le puuid
+        name_variants.append(puuid)
+
         for name in name_variants:
-            log.info(f"Essai string body: '{name}'")
+            log.info(f"  [v1 string] body='{name}'")
             resp = requests.post(
-                endpoint,
-                data=json.dumps(name),   # body = "KC Retlaw" (string JSON)
+                endpoint_v1,
+                data=json.dumps(name),
                 headers=headers,
                 verify=False,
                 timeout=15
             )
+            log.info(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
             if resp.status_code in (200, 204):
-                log.info(f"✅ Succès avec body='{name}'")
-                success = True
-                break
-            log.warning(f"→ '{name}' → {resp.status_code}: {resp.text[:200]}")
+                log.info(f"✅ Spectateur lancé (v1 string body='{name}')")
+                return True
 
-        # Fallback : essai avec objet JSON classique
-        if not success:
-            for pl in payloads_to_try:
-                resp = requests.post(endpoint, json=pl, headers=headers, verify=False, timeout=15)
+        # ── Séquence 2 : v2 avec objet JSON complet ──
+        endpoint_v2 = f"{base_url}/lol-gameflow/v2/spectate/launch"
+        spectate_server = "spectator.euw1.lol.pvp.net"
+
+        v2_payloads = [
+            # Tentative avec tous les champs connus
+            {
+                "dropInSpectateGameId": str(game_id),
+                "gameQueueType": game.get("gameQueueConfigId", "RANKED_SOLO_5x5"),
+                "allowObserveMode": "ALL",
+                "puuid": puuid,
+                "encryptionKey": encryption_key,
+                "gameId": game_id,
+                "serverAddress": f"{spectate_server}:80",
+            },
+            {
+                "dropInSpectateGameId": str(game_id),
+                "allowObserveMode": "ALL",
+                "puuid": puuid,
+            },
+            {
+                "summonerName": display_name,
+                "encryptionKey": encryption_key,
+                "gameId": game_id,
+                "serverAddress": spectate_server,
+                "serverPort": 80,
+                "platformId": "EUW1",
+            },
+            {
+                "spectatorServerAddress": spectate_server,
+                "spectatorServerPort": 80,
+                "spectatorEncryptionKey": encryption_key,
+                "gameId": str(game_id),
+                "summonerName": display_name,
+            },
+        ]
+
+        for pl in v2_payloads:
+            log.info(f"  [v2 JSON] keys={list(pl.keys())}")
+            resp = requests.post(endpoint_v2, json=pl, headers=headers, verify=False, timeout=15)
+            log.info(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
+            if resp.status_code in (200, 204):
+                log.info(f"✅ Spectateur lancé (v2 JSON keys={list(pl.keys())})")
+                return True
+
+        # ── Séquence 3 : endpoint lol-spectator alternatif ──
+        for alt_ep in [
+            f"{base_url}/lol-spectator/v1/spectate",
+            f"{base_url}/lol-spectator/v2/spectate/launch",
+        ]:
+            body = {
+                "puuid": puuid,
+                "gameId": game_id,
+                "encryptionKey": encryption_key,
+                "serverAddress": spectate_server,
+                "serverPort": 80,
+            }
+            log.info(f"  [alt] endpoint={alt_ep.split('/')[-3]}/{alt_ep.split('/')[-2]}/{alt_ep.split('/')[-1]}")
+            try:
+                resp = requests.post(alt_ep, json=body, headers=headers, verify=False, timeout=10)
+                log.info(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
                 if resp.status_code in (200, 204):
-                    log.info(f"✅ Succès! payload keys={list(pl.keys())}")
-                    success = True
-                    break
-                log.warning(f"→ payload={list(pl.keys())} → {resp.status_code}: {resp.text[:200]}")
+                    log.info(f"✅ Spectateur lancé (endpoint alternatif)")
+                    return True
+            except Exception:
+                pass
 
-        if success:
-            log.info("Spectateur lancé via LCU ✅")
-            return True
-        else:
-            log.error("Spectateur LCU échoué — les joueurs doivent être amis avec IzakSpectate")
-            return False
+        log.error("❌ Toutes les tentatives LCU spectate ont échoué.")
+        log.error("→ Vérifier logs/lcu_diagnostic.json pour analyser l'état LCU.")
+        log.error("→ Solution garantie : être ami avec le joueur sur IzakSpectate.")
+        return False
 
     except Exception as e:
         log.error(f"Lancement spectateur échoué: {e}")
