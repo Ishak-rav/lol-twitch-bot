@@ -464,100 +464,81 @@ def launch_spectator(game: dict, config: dict, active_player: dict):
         xmpp_id = get_friend_xmpp_id(port, headers, display_name, puuid)
 
         log.info(f"Tentative spectate LCU: {riot_id} | gameId={game_id} | xmpp_id={xmpp_id}")
-        success = False
-        endpoint_v1 = f"{base_url}/lol-gameflow/v1/spectate/launch"
 
-        # ── Séquence 1 : v1 avec string body (nom, riot id, xmpp id, puuid) ──
-        name_variants = [display_name, riot_id]
-        if xmpp_id:
-            name_variants.insert(0, xmpp_id)
-        # Essai aussi avec le puuid
-        name_variants.append(puuid)
+        # ── Mapping queue ID → queue type string ──
+        queue_type_map = {
+            420: "RANKED_SOLO_5x5",
+            440: "RANKED_FLEX_SR",
+            450: "ARAM",
+            400: "NORMAL_5x5_DRAFT",
+            430: "NORMAL_5x5_BLIND",
+            490: "NORMAL_5x5_DRAFT",  # Quickplay
+            900: "URF",
+            1900: "URF",
+            1020: "ONE_FOR_ALL",
+            720: "ARAM",
+        }
+        queue_id = game.get("gameQueueConfigId", 0)
+        game_queue_type = queue_type_map.get(queue_id, str(queue_id))
 
-        for name in name_variants:
-            log.info(f"  [v1 string] body='{name}'")
-            resp = requests.post(
-                endpoint_v1,
-                data=json.dumps(name),
-                headers=headers,
-                verify=False,
-                timeout=15
-            )
+        # Payload correct selon le schéma LCU découvert via dysolix/hasagi-types
+        # Champs requis : dropInSpectateGameId (string), gameQueueType, allowObserveMode, puuid, spectatorKey
+        correct_payload = {
+            "dropInSpectateGameId": str(game_id),   # STRING obligatoire
+            "gameQueueType": game_queue_type,
+            "allowObserveMode": "ALL",
+            "puuid": puuid,
+            "spectatorKey": encryption_key,          # "spectatorKey" et non "encryptionKey" !
+        }
+        log.info(f"  Payload LCU: {correct_payload}")
+
+        # ── Étape 0 : vérification via can-spectate (ne lance pas le jeu) ──
+        check_url = f"{base_url}/lol-spectator/v3/buddy/can-spectate/{puuid}/{encryption_key}"
+        try:
+            check_resp = requests.get(check_url, headers=headers, verify=False, timeout=10)
+            log.info(f"  [can-spectate v3] {check_resp.status_code}: {check_resp.text[:300]}")
+        except Exception as e:
+            log.warning(f"  [can-spectate v3] erreur: {e}")
+
+        # ── Étape 1 : /lol-spectator/v1/spectate/launch (endpoint dédié, payload complet) ──
+        ep1 = f"{base_url}/lol-spectator/v1/spectate/launch"
+        log.info(f"  [spectator/v1/launch] POST {ep1}")
+        resp = requests.post(ep1, json=correct_payload, headers=headers, verify=False, timeout=15)
+        log.info(f"  → HTTP {resp.status_code}: {resp.text[:300]}")
+        if resp.status_code in (200, 204):
+            log.info("✅ Spectateur lancé (lol-spectator/v1/spectate/launch)")
+            return True
+
+        # ── Étape 2 : /lol-gameflow/v2/spectate/launch (même schéma) ──
+        ep2 = f"{base_url}/lol-gameflow/v2/spectate/launch"
+        log.info(f"  [gameflow/v2/launch] POST {ep2}")
+        resp = requests.post(ep2, json=correct_payload, headers=headers, verify=False, timeout=15)
+        log.info(f"  → HTTP {resp.status_code}: {resp.text[:300]}")
+        if resp.status_code in (200, 204):
+            log.info("✅ Spectateur lancé (lol-gameflow/v2/spectate/launch)")
+            return True
+
+        # ── Étape 3 : /lol-spectator/v3/buddy/spectate avec [puuid] ──
+        ep3 = f"{base_url}/lol-spectator/v3/buddy/spectate"
+        log.info(f"  [spectator/v3/buddy] POST {ep3} body=['{puuid}']")
+        resp = requests.post(ep3, json=[puuid], headers=headers, verify=False, timeout=15)
+        log.info(f"  → HTTP {resp.status_code}: {resp.text[:300]}")
+        if resp.status_code in (200, 204):
+            log.info("✅ Spectateur lancé (lol-spectator/v3/buddy/spectate)")
+            return True
+
+        # ── Étape 4 : /lol-gameflow/v1/spectate/launch (string body) ──
+        ep4 = f"{base_url}/lol-gameflow/v1/spectate/launch"
+        for name in ([xmpp_id] if xmpp_id else []) + [display_name, riot_id]:
+            log.info(f"  [gameflow/v1/launch string] body='{name}'")
+            resp = requests.post(ep4, data=json.dumps(name), headers=headers, verify=False, timeout=15)
             log.info(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
             if resp.status_code in (200, 204):
-                log.info(f"✅ Spectateur lancé (v1 string body='{name}')")
+                log.info(f"✅ Spectateur lancé (gameflow/v1/launch body='{name}')")
                 return True
-
-        # ── Séquence 2 : v2 avec objet JSON complet ──
-        endpoint_v2 = f"{base_url}/lol-gameflow/v2/spectate/launch"
-        spectate_server = "spectator.euw1.lol.pvp.net"
-
-        v2_payloads = [
-            # Tentative avec tous les champs connus
-            {
-                "dropInSpectateGameId": str(game_id),
-                "gameQueueType": game.get("gameQueueConfigId", "RANKED_SOLO_5x5"),
-                "allowObserveMode": "ALL",
-                "puuid": puuid,
-                "encryptionKey": encryption_key,
-                "gameId": game_id,
-                "serverAddress": f"{spectate_server}:80",
-            },
-            {
-                "dropInSpectateGameId": str(game_id),
-                "allowObserveMode": "ALL",
-                "puuid": puuid,
-            },
-            {
-                "summonerName": display_name,
-                "encryptionKey": encryption_key,
-                "gameId": game_id,
-                "serverAddress": spectate_server,
-                "serverPort": 80,
-                "platformId": "EUW1",
-            },
-            {
-                "spectatorServerAddress": spectate_server,
-                "spectatorServerPort": 80,
-                "spectatorEncryptionKey": encryption_key,
-                "gameId": str(game_id),
-                "summonerName": display_name,
-            },
-        ]
-
-        for pl in v2_payloads:
-            log.info(f"  [v2 JSON] keys={list(pl.keys())}")
-            resp = requests.post(endpoint_v2, json=pl, headers=headers, verify=False, timeout=15)
-            log.info(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
-            if resp.status_code in (200, 204):
-                log.info(f"✅ Spectateur lancé (v2 JSON keys={list(pl.keys())})")
-                return True
-
-        # ── Séquence 3 : endpoint lol-spectator alternatif ──
-        for alt_ep in [
-            f"{base_url}/lol-spectator/v1/spectate",
-            f"{base_url}/lol-spectator/v2/spectate/launch",
-        ]:
-            body = {
-                "puuid": puuid,
-                "gameId": game_id,
-                "encryptionKey": encryption_key,
-                "serverAddress": spectate_server,
-                "serverPort": 80,
-            }
-            log.info(f"  [alt] endpoint={alt_ep.split('/')[-3]}/{alt_ep.split('/')[-2]}/{alt_ep.split('/')[-1]}")
-            try:
-                resp = requests.post(alt_ep, json=body, headers=headers, verify=False, timeout=10)
-                log.info(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
-                if resp.status_code in (200, 204):
-                    log.info(f"✅ Spectateur lancé (endpoint alternatif)")
-                    return True
-            except Exception:
-                pass
 
         log.error("❌ Toutes les tentatives LCU spectate ont échoué.")
-        log.error("→ Vérifier logs/lcu_diagnostic.json pour analyser l'état LCU.")
-        log.error("→ Solution garantie : être ami avec le joueur sur IzakSpectate.")
+        log.error("→ Consultez logs/lcu_diagnostic.json pour analyser l'état LCU.")
         return False
 
     except Exception as e:
